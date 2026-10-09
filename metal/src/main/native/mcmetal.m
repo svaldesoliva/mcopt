@@ -3,6 +3,8 @@
 // Built without ARC so ownership is explicit. Hot encoder calls allocate nothing, so they need no autorelease pool.
 #include <stdatomic.h>
 #import "mcmetal.h"
+#import <MetalFX/MetalFX.h>
+#import <AppKit/AppKit.h>
 #import <CoreVideo/CoreVideo.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <QuartzCore/CABase.h>
@@ -38,7 +40,18 @@ static NSString *presentSource = @
 	"  float2 p = float2((id << 1) & 2, id & 2);\n"
 	"  return float4(p * 2.0 - 1.0, c.depth, 1.0);\n"
 	"}\n"
-	"fragment float4 clear_fs(constant Clear &c [[buffer(0)]]) { return c.color; }\n";
+	"fragment float4 clear_fs(constant Clear &c [[buffer(0)]]) { return c.color; }\n"
+	// Camera-only motion for the temporal upscaler: each pixel's depth, reprojected into last frame. Texture row r holds
+	// NDC y = (r + 0.5) / h * 2 - 1 (vertex Y is flipped), so uv and NDC line up without a flip here.
+	"struct Reproject { float4x4 m; float2 size; };\n"
+	"kernel void motion_cs(texture2d<float, access::read> depth [[texture(0)]], texture2d<half, access::write> motion [[texture(1)]],\n"
+	"                      constant Reproject &r [[buffer(0)]], uint2 id [[thread_position_in_grid]]) {\n"
+	"  if (id.x >= uint(r.size.x) || id.y >= uint(r.size.y)) return;\n"
+	"  float2 uv = (float2(id) + 0.5) / r.size;\n"
+	"  float4 prev = r.m * float4(uv * 2.0 - 1.0, depth.read(id).r, 1.0);\n"
+	"  float2 prevUv = prev.w > 0.0 ? prev.xy / prev.w * 0.5 + 0.5 : uv;\n"
+	"  motion.write(half4(half2(prevUv - uv), 0.0h, 0.0h), id);\n"
+	"}\n";
 
 Ctx *mc_create(char *name, int nameCap, char *err, int errCap) {
 	@autoreleasepool {
@@ -75,6 +88,8 @@ Ctx *mc_create(char *name, int nameCap, char *err, int errCap) {
 			fan[k * 3 + 1] = k + 1;
 			fan[k * 3 + 2] = k + 2;
 		}
+		ctx->motion = [device newComputePipelineStateWithFunction:[[lib newFunctionWithName:@"motion_cs"] autorelease] error:&e];
+		if (!ctx->motion) { copyError(e, err, errCap); return NULL; }
 		strlcpy(name, device.name.UTF8String, nameCap);
 		return ctx;
 	}
@@ -1792,6 +1807,17 @@ id<CAMetalDrawable> mc_layer_next(CAMetalLayer *layer) {
 	}
 }
 
+CAMetalLayer *mc_layer_attach(NSWindow *window) {
+	@autoreleasepool {
+		NSView *view = [window contentView];
+		CAMetalLayer *layer = [[CAMetalLayer alloc] init];
+		layer.contentsScale = [window backingScaleFactor];
+		[view setLayer:layer];
+		[view setWantsLayer:YES];
+		return layer;
+	}
+}
+
 // Draws src into the drawable (flipped back to top-down) and schedules the present on the current command buffer.
 void mc_present(Enc *enc, id<CAMetalDrawable> drawable, id<MTLTexture> src) {
 	endBlit(enc);
@@ -1978,3 +2004,86 @@ static void pqSubmit(void) {
 }
 
 long mc_present_skipped(void) { return atomic_load(&pqSkipped); }
+
+// ---- MetalFX temporal upscaling ----
+
+typedef struct {
+	id<MTLFXTemporalScaler> scaler;
+	id<MTLTexture> motion;  // input size, RG16Float, written by motion_cs
+	id<MTLTexture> output;  // output size, what the scaler writes; copied into the game's full-size target
+} Fx;
+
+Fx *mc_fx_new(Ctx *ctx, int inW, int inH, int outW, int outH, int colorFormat, int depthFormat, char *err, int errCap) {
+	@autoreleasepool {
+		if (![MTLFXTemporalScalerDescriptor supportsDevice:ctx->device]) {
+			strlcpy(err, "MetalFX temporal scaling isn't supported on this GPU", errCap);
+			return NULL;
+		}
+		MTLFXTemporalScalerDescriptor *d = [[MTLFXTemporalScalerDescriptor new] autorelease];
+		d.colorTextureFormat = d.outputTextureFormat = (MTLPixelFormat) colorFormat;
+		d.depthTextureFormat = (MTLPixelFormat) depthFormat;
+		d.motionTextureFormat = MTLPixelFormatRG16Float;
+		d.inputWidth = inW;
+		d.inputHeight = inH;
+		d.outputWidth = outW;
+		d.outputHeight = outH;
+		id<MTLFXTemporalScaler> scaler = [d newTemporalScalerWithDevice:ctx->device];
+		if (!scaler) {
+			snprintf(err, errCap, "MetalFX refused %dx%d -> %dx%d, color format %d, depth format %d", inW, inH, outW, outH, colorFormat, depthFormat);
+			return NULL;
+		}
+		MTLTextureDescriptor *t = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRG16Float width:inW height:inH mipmapped:NO];
+		t.storageMode = MTLStorageModePrivate;
+		t.usage = MTLTextureUsageShaderWrite | scaler.motionTextureUsage;
+		Fx *fx = calloc(1, sizeof(Fx));
+		fx->scaler = scaler;
+		fx->motion = [ctx->device newTextureWithDescriptor:t];
+		t = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:(MTLPixelFormat) colorFormat width:outW height:outH mipmapped:NO];
+		t.storageMode = MTLStorageModePrivate;
+		t.usage = scaler.outputTextureUsage;
+		fx->output = [ctx->device newTextureWithDescriptor:t];
+		return fx;
+	}
+}
+
+void mc_fx_free(Fx *fx) {
+	[fx->scaler release];
+	[fx->motion release];
+	[fx->output release];
+	free(fx);
+}
+
+// reproject: column-major 4x4 taking this frame's unjittered clip space to last frame's. Jitter is in input pixels;
+// motionSign flips the motion vectors' direction (they're written as last frame's position minus this frame's).
+void mc_fx_upscale(Enc *enc, Fx *fx, id<MTLTexture> color, id<MTLTexture> depth, id<MTLTexture> dst, const float *reproject,
+	float jitterX, float jitterY, float motionSign, int reset) {
+	endBlit(enc);
+	endRender(enc);
+	id<MTLFXTemporalScaler> s = fx->scaler;
+	struct { simd_float4x4 m; simd_float2 size; } r;
+	memcpy(&r.m, reproject, sizeof r.m);
+	r.size = simd_make_float2(s.inputWidth, s.inputHeight);
+	@autoreleasepool {
+		id<MTLComputeCommandEncoder> c = [cmd(enc) computeCommandEncoder];
+		[c setComputePipelineState:enc->ctx->motion];
+		[c setTexture:depth atIndex:0];
+		[c setTexture:fx->motion atIndex:1];
+		[c setBytes:&r length:sizeof r atIndex:0];
+		[c dispatchThreads:MTLSizeMake(s.inputWidth, s.inputHeight, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+		[c endEncoding];
+	}
+	s.colorTexture = color;
+	s.depthTexture = depth;
+	s.motionTexture = fx->motion;
+	s.outputTexture = fx->output;
+	s.inputContentWidth = s.inputWidth;
+	s.inputContentHeight = s.inputHeight;
+	s.jitterOffsetX = jitterX;
+	s.jitterOffsetY = jitterY;
+	s.motionVectorScaleX = motionSign * s.inputWidth;
+	s.motionVectorScaleY = motionSign * s.inputHeight;
+	s.depthReversed = YES;
+	s.reset = reset != 0;
+	[s encodeToCommandBuffer:cmd(enc)];
+	[blit(enc) copyFromTexture:fx->output toTexture:dst];
+}

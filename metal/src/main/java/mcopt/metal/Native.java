@@ -116,6 +116,11 @@ final class Native {
 	private static final MethodHandle PACE = fn("mc_pace", false, JAVA_INT, JAVA_DOUBLE);
 	private static final MethodHandle SLEEP_PRECISE = fn("mc_sleep_precise", false, null, JAVA_LONG);
 
+	private static final MethodHandle FX_NEW = fn("mc_fx_new", false, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
+	private static final MethodHandle FX_FREE = fn("mc_fx_free", false, null, JAVA_LONG);
+	private static final MethodHandle FX_UPSCALE = fn("mc_fx_upscale", false, null, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG,
+		JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT, JAVA_INT);
+
 	private Native() {
 	}
 
@@ -236,6 +241,10 @@ final class Native {
 	static long presentDropped() { try { return (long) PRESENT_DROPPED.invokeExact(); } catch (Throwable t) { throw rethrow(t); } }
 	static void sleepPrecise(long ns) { try { SLEEP_PRECISE.invokeExact(ns); } catch (Throwable t) { throw rethrow(t); } }
 	static boolean pace(double marginSeconds) { try { return (int) PACE.invokeExact(marginSeconds) != 0; } catch (Throwable t) { throw rethrow(t); } }
+
+	static long fxNew(long ctx, int inW, int inH, int outW, int outH, int colorFormat, int depthFormat, long err, int errCap) { try { return (long) FX_NEW.invokeExact(ctx, inW, inH, outW, outH, colorFormat, depthFormat, err, errCap); } catch (Throwable t) { throw rethrow(t); } }
+	static void fxFree(long fx) { try { FX_FREE.invokeExact(fx); } catch (Throwable t) { throw rethrow(t); } }
+	static void fxUpscale(long enc, long fx, long color, long depth, long dst, long reproject, float jitterX, float jitterY, float motionSign, int reset) { try { FX_UPSCALE.invokeExact(enc, fx, color, depth, dst, reproject, jitterX, jitterY, motionSign, reset); } catch (Throwable t) { throw rethrow(t); } }
 
 	private static RuntimeException rethrow(Throwable t) {
 		if (t instanceof RuntimeException r) return r;

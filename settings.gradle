@@ -7,4 +7,10 @@ pluginManagement {
 }
 
 rootProject.name = 'mcopt'
-include 'metal', 'fpshud'
+
+file('versions').eachDir { dir ->
+	include dir.name
+	project(":${dir.name}").projectDir = dir
+}
+
+include 'fpshud'

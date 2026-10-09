@@ -10,6 +10,7 @@ typedef struct {
 	NSMutableDictionary<NSNumber *, id<MTLRenderPipelineState>> *clearPipelines;  // keyed by attachment formats
 	id<MTLDepthStencilState> depthWrite, depthKeep;
 	id<MTLBuffer> fanIndices;  // {0, k+1, k+2} per triangle: Metal has no fans, so they're drawn as indexed triangle lists
+	id<MTLComputePipelineState> motion;  // MetalFX motion vectors
 } Ctx;
 
 #define MAX_COLORS 8

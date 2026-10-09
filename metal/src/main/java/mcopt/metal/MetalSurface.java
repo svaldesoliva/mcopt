@@ -6,7 +6,7 @@ import com.mojang.renderpearl.backend.api.CommandEncoderBackend;
 import com.mojang.renderpearl.backend.api.GpuSurfaceBackend;
 import java.util.Collection;
 import java.util.List;
-import org.lwjgl.sdl.SDLMetal;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A CAMetalLayer on the SDL window. The drawable is fetched at blit time rather than frame start: holding it for
@@ -31,6 +31,8 @@ final class MetalSurface implements GpuSurfaceBackend {
 	 * paced frame shown more than half a refresh after the refresh it was aimed at adds lead, a frame on time takes a little away.
 	 */
 	static final boolean PACE_ADAPT = Boolean.getBoolean("mcopt.metal.paceAdapt");
+	private static @Nullable MetalSurface current;
+	private GpuSurface.@Nullable Configuration config;
 	private boolean paced;
 	private final long ctx;
 	private final MetalEncoder encoder;
@@ -40,16 +42,22 @@ final class MetalSurface implements GpuSurfaceBackend {
 	MetalSurface(long ctx, MetalEncoder encoder, long window) {
 		this.ctx = ctx;
 		this.encoder = encoder;
-		this.view = SDLMetal.SDL_Metal_CreateView(window);
-		this.layer = SDLMetal.SDL_Metal_GetLayer(this.view);
+		this.view = Versioned.createView(window);
+		this.layer = Versioned.layer(this.view);
+		current = this;
+	}
+
+	static void reconfigureCurrent() {
+		if (current != null && current.config != null) current.configure(current.config);
 	}
 
 	@Override
 	public void configure(GpuSurface.Configuration config) {
+		this.config = config;
 		boolean vsync = config.presentMode() == GpuSurface.PresentMode.FIFO;
-		this.paced = !vsync && PACE;
+		this.paced = !vsync && PACE && !FrameGen.enabled();
 		if (PACE_ADAPT) Native.paceAdapt(this.paced ? 1 : 0);
-		Native.layerConfigure(this.ctx, this.layer, config.width(), config.height(), (vsync || PACE_SYNC && this.paced ? 1 : 0) | DRAWABLES << 8);
+		Native.layerConfigure(this.ctx, this.layer, config.width(), config.height(), (vsync || FrameGen.enabled() || PACE_SYNC && this.paced ? 1 : 0) | DRAWABLES << 8);
 	}
 
 	@Override
@@ -65,6 +73,11 @@ final class MetalSurface implements GpuSurfaceBackend {
 	public void blitFromTexture(CommandEncoderBackend commandEncoder, GpuTextureView textureView) {
 		// mcopt.rec hook: the opt-in recorder (-Dmcopt.rec, mcopt.metal.rec) takes the finished frame, GUI included. Rec.ON is a constant false without it.
 		if (mcopt.metal.rec.Rec.ON) mcopt.metal.rec.Rec.frame(this.encoder, textureView);
+		FrameGen frameGen = FrameGen.enabled() ? FrameGen.get(this.encoder) : null;
+		if (frameGen != null) {
+			frameGen.frame((MetalTexture.View) textureView, this.layer);
+			return;
+		}
 		long t0 = WaitStats.ON ? System.nanoTime() : 0;
 		if (this.paced && !Native.pace(PACE_MARGIN_S)) {
 			if (WaitStats.ON) WaitStats.wait(WaitStats.PACE, System.nanoTime() - t0, 0);
@@ -91,6 +104,8 @@ final class MetalSurface implements GpuSurfaceBackend {
 
 	@Override
 	public void present() {
+		FrameGen frameGen = FrameGen.enabled() ? FrameGen.get(this.encoder) : null;
+		if (frameGen != null) frameGen.afterSubmit();
 		// The present was scheduled on the frame's command buffer in blitFromTexture and happens when it's committed.
 	}
 
@@ -101,6 +116,9 @@ final class MetalSurface implements GpuSurfaceBackend {
 
 	@Override
 	public void close() {
-		SDLMetal.SDL_Metal_DestroyView(this.view);
+		FrameGen frameGen = FrameGen.enabled() ? FrameGen.get(this.encoder) : null;
+		if (frameGen != null) frameGen.close();
+		if (current == this) current = null;
+		Versioned.destroyView(this.view);
 	}
 }

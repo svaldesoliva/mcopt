@@ -1,11 +1,12 @@
 # mcopt — svaldesoliva fork
 
 Fork of [noahdunnagan/mcopt](https://github.com/noahdunnagan/mcopt), based on
-[bbauti/mcopt](https://github.com/bbauti/mcopt). This fork is being prepared to integrate upstream PRs;
-those changes are not included yet. Original authorship and licence notices are preserved.
+[bbauti/mcopt](https://github.com/bbauti/mcopt). This fork integrates PRs [#10](https://github.com/noahdunnagan/mcopt/pull/10),
+[#12](https://github.com/noahdunnagan/mcopt/pull/12), and [#15](https://github.com/noahdunnagan/mcopt/pull/15).
+Minecraft 26.3 keeps the upstream 0.3 renderer without Sodium; Minecraft 26.2 uses PR #10's Sodium renderer. Original authorship and licence notices are preserved.
 
 > [!NOTE]
-> mcopt no longer requires Sodium 🎉
+> Minecraft 26.3 uses the renderer without Sodium. The 26.2 build requires Sodium 0.9.2.
 
 A Minecraft performance mod for Apple Silicon Macs. Since 0.3.0-alpha.1 it draws the world with its own Metal renderer.
 **Very much alpha:** expect bugs, and back up your worlds.
@@ -64,20 +65,32 @@ cd mcopt
 sh tools/release
 ```
 
-The script runs `:metal:build` and `:fpshud:build`, compiles and embeds `libmcmetal.dylib`,
-and bundles the FPS HUD into a single jar. With the current version, the outputs are:
+The script runs `:26.2:build`, `:26.3:build`, and `:fpshud:build`, compiles and embeds
+`libmcmetal.dylib`, and bundles the FPS HUD into the 26.3 jar. With the current version, the outputs are:
 
-- `dist/mcopt-0.3.0-alpha.2.jar` — put this file in your Minecraft instance's `mods` folder.
-- `dist/mcopt-0.3.0-alpha.2.zip` — the same jar with installation instructions and licence notices.
+- `dist/mcopt-0.3.0-alpha.2+mc26.3.jar` — put this file in your Minecraft instance's `mods` folder.
+- `dist/mcopt-0.3.0-alpha.2+mc26.3.zip` — the same jar with installation instructions and licence notices.
 
-The filenames follow the version in `metal/build.gradle`. To build only the Metal module:
+The script also builds `dist/mcopt-0.3.0-alpha.2+mc26.2.jar` and its zip for Minecraft 26.2.
+That build requires Sodium 0.9.2 for Minecraft 26.2. The Sodium settings page from PR #10
+is available on that build; 26.3 keeps Sodium disabled. MetalFX render scale and frame generation
+are opt-in through `mcopt.fx.scale` and `mcopt.metal.framegen` in `config/mcopt.properties`.
+Far terrain remains 26.3 only.
+
+The filenames follow `mod_version` in `gradle.properties`. To build only the 26.3 module:
 
 ```bash
-./gradlew :metal:build
+./gradlew :26.3:build
 ```
 
-Its jar is written to `metal/build/libs/metal-0.3.0-alpha.2.jar`; it includes the native library,
+Its jar is written to `versions/26.3/build/libs/mcopt-metal-0.3.0-alpha.2+mc26.3.jar`; it includes the native library,
 but does not bundle the separate FPS HUD. Use the release script for the complete installable package.
+
+To check the generated packages for missing mixins and native entry points:
+
+```bash
+python3 tools/verify-build.py
+```
 
 ## Settings
 

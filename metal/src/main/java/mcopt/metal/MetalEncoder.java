@@ -437,7 +437,7 @@ final class MetalEncoder implements CommandEncoderBackend {
 			}
 			if (continued == 0) this.encoderIndex++;
 		}
-		var area = descriptor.renderArea();
+		var area = Versioned.renderArea(descriptor);
 		if (redirect != null && redirect.depth() != 0) {
 			this.currentPass = new MetalRenderPass(this, true, 0, 0, redirect.width(), redirect.height(), redirect.delegate());
 			return this.currentPass;
@@ -576,7 +576,11 @@ final class MetalEncoder implements CommandEncoderBackend {
 		this.deferClear(depthTexture, null, clearDepth);
 	}
 
-	@Override
+	public void clearColorAndDepthTextures(GpuTexture colorTexture, Vector4fc clearColor, GpuTexture depthTexture, double clearDepth,
+		int x, int y, int width, int height) {
+		this.clearColorAndDepthTextures(colorTexture, clearColor, depthTexture, clearDepth, x, y, width, height, 0);
+	}
+
 	public void clearColorAndDepthTextures(GpuTexture colorTexture, Vector4fc clearColor, GpuTexture depthTexture, double clearDepth,
 		int x, int y, int width, int height, int mip) {
 		if (mip == 0 && x == 0 && y == 0 && width == colorTexture.getWidth(0) && height == colorTexture.getHeight(0)) {
@@ -710,6 +714,18 @@ final class MetalEncoder implements CommandEncoderBackend {
 		this.flushClear(destination);
 		Native.blitTextureToTexture(this.enc, ((MetalTexture) source).handle, ((MetalTexture) destination).handle, mip, destX, destY, sourceX, sourceY,
 			width, height);
+	}
+
+	/** MetalFX: rebuilds dst (full size) from color and depth (render scale); see MetalFx. dst's old contents don't matter. */
+	void upscale(long fx, MetalTexture color, MetalTexture depth, MetalTexture dst, long reproject, float jitterX, float jitterY, float motionSign,
+		boolean reset) {
+		if (this.currentPass != null) throw new IllegalStateException("Cannot upscale inside a render pass");
+		this.trace("upscale", color, "->", dst, reset ? "(reset)" : "");
+		this.flushClear(color);
+		this.flushClear(depth);
+		dst.pendingColorClear = null;
+		this.pendingClears.remove(dst);
+		Native.fxUpscale(this.enc, fx, color.handle, depth.handle, dst.handle, reproject, jitterX, jitterY, motionSign, reset ? 1 : 0);
 	}
 
 	@Override
