@@ -196,65 +196,68 @@ final class LodMesh implements LodClip.Listener {
 		long quads = MemoryUtil.nmemAlloc((long) SCRATCH_QUADS * 8);
 		// PAIRS: the tile and its 1-cell border copied here (geometry, crowns, runs, plants A and B), meshed from the copy
 		long scratch = LodClip.PAIRS ? MemoryUtil.nmemCalloc(5L * SCRATCH * SCRATCH, 4) : 0;
-		while (!this.closed) {
-			long[] job;
-			try {
-				job = this.jobs.take();
-			} catch (InterruptedException e) {
-				return;
-			}
-			long k = job[0];
-			Long s = this.queued.remove(k);
-			if (s == null) continue;
-			Long ver = this.reqVer.get(k);
-			int level = LodTile.levelOf(k), tx = LodTile.txOf(k), tz = LodTile.tzOf(k);
-			try {
-				if (!this.clip.resident(level, tx, tz)) continue;
-				int neighbors = (this.clip.resident(level, tx + 1, tz) ? 1 : 0) | (this.clip.resident(level, tx - 1, tz) ? 2 : 0)
-					| (this.clip.resident(level, tx, tz + 1) ? 4 : 0) | (this.clip.resident(level, tx, tz - 1) ? 8 : 0);
-				long lw = this.clip.levelWords * 4 * level;
-				boolean crowns = level < this.clip.crownLevels;
-				long crown = crowns ? this.clip.crown + lw : 0, runs = crowns ? this.clip.crown + this.clip.runsOffset() * 4 + lw : 0;
-				boolean plants = level == 0 && this.clip.plants;
-				long pa = plants ? this.clip.tex + this.clip.levelWords * 4 : 0, pb = plants ? this.clip.tex + this.clip.levelWords * 8 : 0;
-				long t0 = System.nanoTime();
-				LodClip.Snapshot snap = null;
-				int n;
-				if (LodClip.PAIRS) {
-					snap = this.snaps.get(k);
-					long v = this.copyRegion(scratch, level, tx, tz, snap, crowns, plants);
-					if (v < 0) {
-						// the render thread kept writing: try again later
-						this.request(level, tx, tz);
+		try {
+			while (!this.closed) {
+				long[] job;
+				try {
+					job = this.jobs.take();
+				} catch (InterruptedException e) {
+					return;
+				}
+				long k = job[0];
+				Long s = this.queued.remove(k);
+				if (s == null) continue;
+				Long ver = this.reqVer.get(k);
+				int level = LodTile.levelOf(k), tx = LodTile.txOf(k), tz = LodTile.tzOf(k);
+				try {
+					if (!this.clip.resident(level, tx, tz)) continue;
+					int neighbors = (this.clip.resident(level, tx + 1, tz) ? 1 : 0) | (this.clip.resident(level, tx - 1, tz) ? 2 : 0)
+						| (this.clip.resident(level, tx, tz + 1) ? 4 : 0) | (this.clip.resident(level, tx, tz - 1) ? 8 : 0);
+					long lw = this.clip.levelWords * 4 * level;
+					boolean crowns = level < this.clip.crownLevels;
+					long crown = crowns ? this.clip.crown + lw : 0, runs = crowns ? this.clip.crown + this.clip.runsOffset() * 4 + lw : 0;
+					boolean plants = level == 0 && this.clip.plants;
+					long pa = plants ? this.clip.tex + this.clip.levelWords * 4 : 0, pb = plants ? this.clip.tex + this.clip.levelWords * 8 : 0;
+					long t0 = System.nanoTime();
+					LodClip.Snapshot snap = null;
+					int n;
+					if (LodClip.PAIRS) {
+						snap = this.snaps.get(k);
+						long v = this.copyRegion(scratch, level, tx, tz, snap, crowns, plants);
+						if (v < 0) {
+							// the render thread kept writing: try again later
+							this.request(level, tx, tz);
+							continue;
+						}
+						ver = v;
+						long sp = (long) SCRATCH * SCRATCH * 4;
+						n = LodNative.meshTile(scratch, crowns ? scratch + sp : 0, crowns ? scratch + 2 * sp : 0, plants ? scratch + 3 * sp : 0, plants ? scratch + 4 * sp : 0,
+							SCRATCH_LOG, level, tx, tz, neighbors, BLOCK, header, quads, SCRATCH_QUADS);
+					} else {
+						n = LodNative.meshTile(this.clip.geom + lw, crown, runs, pa, pb, this.clip.logN, level, tx, tz, neighbors, BLOCK, header, quads, SCRATCH_QUADS);
+					}
+					this.meshNanos.addAndGet(System.nanoTime() - t0);
+					if (n < 0) {
+						System.out.println("mcopt-lod: mesh of tile L" + level + " " + tx + "," + tz + " overflows " + SCRATCH_QUADS + " quads; not drawn");
 						continue;
 					}
-					ver = v;
-					long sp = (long) SCRATCH * SCRATCH * 4;
-					n = LodNative.meshTile(scratch, crowns ? scratch + sp : 0, crowns ? scratch + 2 * sp : 0, plants ? scratch + 3 * sp : 0, plants ? scratch + 4 * sp : 0,
-						SCRATCH_LOG, level, tx, tz, neighbors, BLOCK, header, quads, SCRATCH_QUADS);
-				} else {
-					n = LodNative.meshTile(this.clip.geom + lw, crown, runs, pa, pb, this.clip.logN, level, tx, tz, neighbors, BLOCK, header, quads, SCRATCH_QUADS);
+					long words = HDR_WORDS + 2L * n;
+					long block = MemoryUtil.nmemAlloc(words * 4);
+					MemoryUtil.memCopy(header, block, (long) HDR_WORDS * 4);
+					MemoryUtil.memCopy(quads, block + (long) HDR_WORDS * 4, (long) n * 8);
+					this.meshed.incrementAndGet();
+					this.meshQuads.addAndGet(n);
+					if (snap != null) this.resultSnaps.put(block, snap);
+					this.results.add(new long[] {k, s, block, words, neighbors, ver != null ? ver : -1});
+				} catch (RuntimeException e) {
+					System.out.println("mcopt-lod: mesh job failed: " + e);
 				}
-				this.meshNanos.addAndGet(System.nanoTime() - t0);
-				if (n < 0) {
-					System.out.println("mcopt-lod: mesh of tile L" + level + " " + tx + "," + tz + " overflows " + SCRATCH_QUADS + " quads; not drawn");
-					continue;
-				}
-				long words = HDR_WORDS + 2L * n;
-				long block = MemoryUtil.nmemAlloc(words * 4);
-				MemoryUtil.memCopy(header, block, (long) HDR_WORDS * 4);
-				MemoryUtil.memCopy(quads, block + (long) HDR_WORDS * 4, (long) n * 8);
-				this.meshed.incrementAndGet();
-				this.meshQuads.addAndGet(n);
-				if (snap != null) this.resultSnaps.put(block, snap);
-				this.results.add(new long[] {k, s, block, words, neighbors, ver != null ? ver : -1});
-			} catch (RuntimeException e) {
-				System.out.println("mcopt-lod: mesh job failed: " + e);
 			}
+		} finally {
+			MemoryUtil.nmemFree(header);
+			MemoryUtil.nmemFree(quads);
+			if (scratch != 0) MemoryUtil.nmemFree(scratch);
 		}
-		MemoryUtil.nmemFree(header);
-		MemoryUtil.nmemFree(quads);
-		if (scratch != 0) MemoryUtil.nmemFree(scratch);
 	}
 
 	/**
@@ -642,8 +645,25 @@ final class LodMesh implements LodClip.Listener {
 	}
 
 	void close() {
+		if (this.closed) return;
 		this.closed = true;
 		for (Thread t : this.workers) t.interrupt();
+		boolean interrupted = false;
+		for (Thread t : this.workers) {
+			while (t.isAlive()) {
+				try {
+					t.join();
+				} catch (InterruptedException e) {
+					interrupted = true;
+				}
+			}
+		}
+		if (interrupted) Thread.currentThread().interrupt();
+		for (long[] r; (r = this.results.poll()) != null; ) MemoryUtil.nmemFree(r[2]);
+		for (long[] r; (r = this.publishLater.poll()) != null; ) MemoryUtil.nmemFree(r[2]);
+		this.resultSnaps.clear();
+		MemoryUtil.nmemFree(this.tableHost);
+		MemoryUtil.nmemFree(this.frame);
 		this.clip.listener = null;
 	}
 

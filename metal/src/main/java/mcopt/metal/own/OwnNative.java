@@ -109,10 +109,9 @@ final class OwnNative {
 	static long buffer(long ctx, long size, int kind) {
 		try {
 			long b = (long) BUFFER.invokeExact(ctx, size, kind);
-			if (b != 0) {
-				LIVE.put(b, size);
-				LIVE_BYTES.addAndGet(size);
-			}
+			if (b == 0) throw new IllegalStateException("Own terrain buffer of " + size + " bytes failed");
+			LIVE.put(b, size);
+			LIVE_BYTES.addAndGet(size);
 			return b;
 		} catch (Throwable t) {
 			throw rethrow(t);

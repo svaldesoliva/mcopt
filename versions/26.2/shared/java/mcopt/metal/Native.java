@@ -153,8 +153,8 @@ final class Native {
 	static long create(long name, int nameCap, long err, int errCap) { try { return (long) CREATE.invokeExact(name, nameCap, err, errCap); } catch (Throwable t) { throw rethrow(t); } }
 	static long maxBufferLength(long ctx) { try { return (long) MAX_BUFFER_LENGTH.invokeExact(ctx); } catch (Throwable t) { throw rethrow(t); } }
 	static void release(long obj) { try { RELEASE.invokeExact(obj); } catch (Throwable t) { throw rethrow(t); } }
-	static long bufferNew(long ctx, long size) { try { return (long) BUFFER_NEW.invokeExact(ctx, size); } catch (Throwable t) { throw rethrow(t); } }
-	static long bufferPrivate(long ctx, long src, long size) { try { return (long) BUFFER_PRIVATE.invokeExact(ctx, src, size); } catch (Throwable t) { throw rethrow(t); } }
+	static long bufferNew(long ctx, long size) { try { long b = (long) BUFFER_NEW.invokeExact(ctx, size); if (b == 0) throw new IllegalStateException("Metal buffer of " + size + " bytes failed"); return b; } catch (Throwable t) { throw rethrow(t); } }
+	static long bufferPrivate(long ctx, long src, long size) { try { long b = (long) BUFFER_PRIVATE.invokeExact(ctx, src, size); if (b == 0) throw new IllegalStateException("Metal private buffer of " + size + " bytes failed"); return b; } catch (Throwable t) { throw rethrow(t); } }
 	static long bufferContents(long buffer) { try { return (long) BUFFER_CONTENTS.invokeExact(buffer); } catch (Throwable t) { throw rethrow(t); } }
 	static long textureNew(long ctx, int format, int w, int h, int layers, int mips, int usage, int cube) { try { return (long) TEXTURE_NEW.invokeExact(ctx, format, w, h, layers, mips, usage, cube); } catch (Throwable t) { throw rethrow(t); } }
 	static long textureView(long texture, int baseMip, int mips) { try { return (long) TEXTURE_VIEW.invokeExact(texture, baseMip, mips); } catch (Throwable t) { throw rethrow(t); } }

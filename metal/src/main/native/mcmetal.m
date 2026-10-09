@@ -307,6 +307,7 @@ id<MTLBuffer> mc_buffer_new(Ctx *ctx, uint64_t size) {
 id<MTLBuffer> mc_buffer_private(Ctx *ctx, id<MTLBuffer> src, uint64_t size) {
 	@autoreleasepool {
 		id<MTLBuffer> dst = [ctx->device newBufferWithLength:size options:MTLResourceStorageModePrivate];
+		if (!dst) return nil;
 		id<MTLCommandBuffer> cb = [ctx->queue commandBuffer];
 		id<MTLBlitCommandEncoder> b = [cb blitCommandEncoder];
 		[b copyFromBuffer:src sourceOffset:0 toBuffer:dst destinationOffset:0 size:size];

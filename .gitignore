@@ -1,11 +1,32 @@
-refs/
-build/
+# Build outputs and local caches
 .gradle/
-run/
+build/
 out/
+dist/
 *.class
 __pycache__/
 mcopt-pack-cache/
-dist/
+
+# Local game runs and profiling output
+run/
+/framelog.csv
+/framelog-passes.txt
+/enclog.csv
+/gpucount.jsonl
+/framegen/
+*.hprof
+*.jfr
+
+# macOS and editor metadata
+.DS_Store
+._*
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+
+# Local reference and replay artifacts
+refs/
 .replay-stamp
 .replay-lineage

@@ -347,10 +347,7 @@ public final class Lod {
 			this.pk = null;
 		}
 		if (this.clip != null) {
-			this.releaseLater.add(new long[] {this.frames, this.clip.geomBuf});
-			this.releaseLater.add(new long[] {this.frames, this.clip.colorBuf});
-			this.releaseLater.add(new long[] {this.frames, this.clip.mipBuf});
-			this.releaseLater.add(new long[] {this.frames, this.clip.crownBuf});
+			for (long b : this.clip.buffers()) this.releaseLater.add(new long[] {this.frames, b});
 			this.clip = null;
 		}
 		this.worldOwner = owner;
@@ -364,7 +361,7 @@ public final class Lod {
 		}
 		Path root = LodConfig.CACHE_DIR != null ? Path.of(LodConfig.CACHE_DIR) : mc.gameDirectory.toPath().resolve("mcopt-lod");
 		String save = server.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize().getFileName().toString();
-		Path cache = root.resolve(save).resolve(level.dimension().identifier().getNamespace() + "_" + level.dimension().identifier().getPath());
+		Path cache = LodField.cachePath(root, save, sl.getSeed(), level.dimension().identifier().getNamespace() + "_" + level.dimension().identifier().getPath());
 		// tiles cached under other crown or tree levels lack (or carry) data these levels need: their own directory
 		if (LodConfig.CROWN_LEVELS != 1 || LodConfig.TREE_LEVELS != 1) cache = cache.resolve("c" + LodConfig.CROWN_LEVELS + "t" + LodConfig.TREE_LEVELS);
 		this.clip = new LodClip(this.ctx, LodConfig.N, LodConfig.reachBlocks());

@@ -21,7 +21,7 @@ configure(subprojects.findAll { it.name != 'fpshud' }) {
 	dependencies {
 		minecraft "com.mojang:minecraft:${minecraft_version}"
 		implementation "net.fabricmc:fabric-loader:${loader_version}"
-		compileOnly "maven.modrinth:sodium:${sodium_version}"
+		if (project.name == '26.2') compileOnly "maven.modrinth:sodium:${sodium_version}"
 		if (project.name == '26.3') {
 			compileOnly "net.fabricmc.fabric-api:fabric-renderer-api-v1:17.0.15+79385d0b5d"
 			compileOnly "net.fabricmc.fabric-api:fabric-api-base:2.0.6+fcdff87f5d"
@@ -54,6 +54,7 @@ configure(subprojects.findAll { it.name != 'fpshud' }) {
 		sourceSets.main.java.srcDir sharedJava
 	}
 	sourceSets.main.resources.srcDir new File(shared, 'resources')
+	sourceSets.test.java.srcDir rootProject.file('metal/src/test/java')
 
 	def nativeOut = layout.buildDirectory.dir('natives/natives')
 
@@ -71,7 +72,8 @@ configure(subprojects.findAll { it.name != 'fpshud' }) {
 	processResources {
 		dependsOn 'compileNative'
 		from(layout.buildDirectory.dir('natives'))
-		def props = [version: version, minecraft_dep: minecraft_dep, sodium_dep: sodium_dep, mixins: mixins.split(',').collect { "${it}.mixins.json" }.join('", "')]
+		def props = [version: version]
+		if (project.name == '26.2') props += [minecraft_dep: minecraft_dep, sodium_dep: sodium_dep, mixins: mixins.split(',').collect { "${it}.mixins.json" }.join('", "')]
 		inputs.properties props
 		filesMatching('fabric.mod.json') { expand props }
 	}
@@ -90,5 +92,32 @@ configure(subprojects.findAll { it.name != 'fpshud' }) {
 		// the far terrain's Vector API noise control (LodNoiseVector, opt-in -Dmcopt.lod.nativeNoise=vector): loaded only when the game runs with
 		// --add-modules jdk.incubator.vector
 		if (it.name == 'compileJava') it.options.compilerArgs += ['--add-modules', 'jdk.incubator.vector']
+	}
+
+	def saveCheck = tasks.register('saveCheck', JavaExec) {
+		dependsOn 'testClasses'
+		workingDir = layout.buildDirectory.get().asFile
+		classpath = sourceSets.test.runtimeClasspath
+		mainClass = 'mcopt.metal.chunkio.SaveChecks'
+	}
+	// Regression checks are standalone Java mains, so no test framework is needed.
+	tasks.named('test') { failOnNoDiscoveredTests = false }
+	def bufferCheck = tasks.register('bufferCheck', JavaExec) {
+		dependsOn 'testClasses'
+		workingDir = layout.buildDirectory.get().asFile
+		classpath = sourceSets.test.runtimeClasspath
+		mainClass = 'mcopt.metal.BufferChecks'
+		jvmArgs '--enable-native-access=ALL-UNNAMED'
+	}
+	tasks.named('check') { dependsOn saveCheck, bufferCheck }
+	if (project.name == '26.3') {
+		def lodCheck = tasks.register('lodCheck', JavaExec) {
+			dependsOn 'testClasses'
+			workingDir = layout.buildDirectory.get().asFile
+			classpath = sourceSets.test.runtimeClasspath
+			mainClass = 'mcopt.metal.lod.LodChecks'
+			jvmArgs '--enable-native-access=ALL-UNNAMED', '-Dorg.lwjgl.util.DebugAllocator=true', '-Dmcopt.lod.publish=gpu'
+		}
+		tasks.named('check') { dependsOn lodCheck }
 	}
 }

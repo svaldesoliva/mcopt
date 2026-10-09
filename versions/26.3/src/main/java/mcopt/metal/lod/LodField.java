@@ -129,6 +129,10 @@ final class LodField {
 		return this.cache.resolve("L" + LodTile.levelOf(key)).resolve(LodTile.txOf(key) + "." + LodTile.tzOf(key) + ".lod");
 	}
 
+	static Path cachePath(Path root, String save, long seed, String dimension) {
+		return root.resolve(save).resolve(Long.toUnsignedString(seed, 16)).resolve(dimension);
+	}
+
 	private boolean stillWanted(long key) {
 		int l = LodTile.levelOf(key), x = LodTile.txOf(key) - this.winTx[l], z = LodTile.tzOf(key) - this.winTz[l];
 		return x >= 0 && z >= 0 && x < this.clip.tilesPerSide && z < this.clip.tilesPerSide;

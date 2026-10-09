@@ -545,11 +545,11 @@ final class LodClip {
 		return rgb565(top) | rgb565(side) << 16;
 	}
 
+	long[] buffers() {
+		return new long[] {this.geomBuf, this.colorBuf, this.mipBuf, this.crownBuf, this.texBuf};
+	}
+
 	void free() {
-		LodNative.release(this.texBuf);
-		LodNative.release(this.crownBuf);
-		LodNative.release(this.geomBuf);
-		LodNative.release(this.colorBuf);
-		LodNative.release(this.mipBuf);
+		for (long b : this.buffers()) LodNative.release(b);
 	}
 }

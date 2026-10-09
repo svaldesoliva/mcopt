@@ -92,6 +92,14 @@ To check the generated packages for missing mixins and native entry points:
 python3 tools/verify-build.py
 ```
 
+Run the save, allocation-failure, and far-terrain cleanup regression checks:
+
+```bash
+./gradlew :26.2:check :26.3:check
+```
+
+The cleanup check runs Metal without opening a game window. These checks also run during `tools/release`.
+
 ## Settings
 
 - The perf profile is on by default.
